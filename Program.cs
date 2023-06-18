@@ -1,91 +1,68 @@
-﻿using OpenQA.Selenium;
+﻿
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.Support.UI;
+using System.Text.RegularExpressions;
 
-var tokens = new List<string>
-{
-    "682066f9862be02baa0b2d03bfe398aa1764da94",
-    "05c11bbd48e196dc0212f5ebb0d06843bc9e962b",
-    "ba0676a2d3e7b6644f16c416ee2ad87e6e8c8c30",
-    "7eff45addb2c045ed4a2f2ba173b032afdcdd2b0",
-    "382b2e3cd519610309b7efd3b508aaeabd1b56c9",
-    "6530ac171a2a986dbf2540f989a39916374978d1",
-    "3d369c8741fe90ad6008a52788fae2621154bae5",
-    "df71e30670784b1aadca3a092f959f4555e150b6",
-    "261a518f6ce4e2752a1da020cf3bb05d3d7e6a22",
-    "e8676f4ae5fabb5270e3567a7eb93672c7a4acbe"
-};
+IServiceCollection serviceCollection = new ServiceCollection();
 
-var phantomDriver = new PhantomChromeDriver();
-phantomDriver.Navigate().GoToUrl("https://sbermarket.ru/");
+serviceCollection.AddSingleton<WorkerService>();
+serviceCollection.AddSingleton<ParseItemService>();
+//serviceCollection.AddScoped<ChechItemService>();
+//serviceCollection.AddScoped<PhantomChromeDriver>();
+serviceCollection.AddDbContext<DomainDbContext>(options => options.UseSqlite("Filename=C:\\Users\\cowor\\source\\repos\\ConsoleApp1\\ConsoleApp1\\Mobile.db"));
 
-foreach (var token in tokens)
-{
-    Cookie cookie = new(name: "auth_token",
-                         value: token,
-                         domain: "twitter.com",
-                         path: "/",
-                         expiry: DateTime.Today.AddDays(1),
-                         secure: true,
-                         isHttpOnly: false,
-                         sameSite: "None");
 
-    phantomDriver.Navigate().GoToUrl("https://twitter.com/");
-    phantomDriver.Manage().Cookies.AddCookie(cookie);
-    phantomDriver.Navigate().GoToUrl("https://twitter.com/FOMO_Bears/");
-    phantomDriver
-        .FindElement(By.XPath("//div[contains(@aria-label, 'Follow') and contains(@role, 'button')]"), 10)
-        .Click();
-
-    phantomDriver.Manage().Cookies.DeleteAllCookies();
-}
+var serviceProvider = serviceCollection.BuildServiceProvider();
+var parse = serviceProvider.GetService<ParseItemService>();
+parse.ParseItems(50);
 
 Thread.Sleep(-1);
 
-public static class WebDriverExtensions
+public class WorkerService
 {
-    public static IWebElement FindElement(this IWebDriver driver, By by, int timeoutInSeconds)
+    private PhantomChromeDriver _driver;
+
+    public IWebDriver GetDriver()
     {
-        IWebElement result = null;
-        var durations = 0;
-
-        while (result == null)
-        {
-            try
-            {
-                result = driver.FindElement(by);
-                break;
-            }
-            catch (NoSuchElementException)
-            {
-                durations += 100;
-                Thread.Sleep(100);
-            }
-
-            if (durations > timeoutInSeconds * 1000)
-                throw new NoSuchElementException();
-        }
-
-        return result;
+        var options = new ChromeOptions();
+        options.AddArgument($"--user-data-dir={Directory.GetCurrentDirectory()}/Main");
+        return new PhantomChromeDriver(options);
     }
 }
 
-public class PhantomChromeDriver : ChromeDriver
+public class WebItem
 {
-    public PhantomChromeDriver() : base(RemovingFlag()) { }
-    public PhantomChromeDriver(ChromeOptions options) : base(RemovingFlag(options)) { }
+    public string Id => _element.GetAttribute("data-product-id");
+    public string Title => _element.FindElement(By.CssSelector(".item-title")).Text;
+    public Uri Uri => new Uri(_element.FindElement(By.TagName("a")).GetAttribute("href"));
+    public int Price => int.Parse(Regex.Match(_element.FindElement(By.CssSelector(".item-price")).Text, @"\d+").Value);
+    public bool IsLike => _element.IsExist(By.CssSelector(".to-favorite-button svg"));
 
-    private static ChromeOptions RemovingFlag() => ModifyOptions(new ChromeOptions());
-    private static ChromeOptions RemovingFlag(ChromeOptions options) => ModifyOptions(options);
 
-    private static ChromeOptions ModifyOptions(ChromeOptions options)
+    const string XPath = "//div[@class = 'catalog-item']";
+
+    private IWebElement _element;
+
+    public static WebItem Find(IWebDriver driver)
     {
-        options.AddExcludedArgument("enable-automation");
-        options.AddAdditionalChromeOption("useAutomationExtension", false);
-        options.AddAdditionalOption("useAutomationExtension", false);
-        options.AddArgument("--disable-infobars");
-        options.AddArgument("--disable-blink-features=AutomationControlled");
+        return new WebItem() { _element = driver.FindElement(By.XPath(XPath), 3) };
+    }
 
-        return options;
+    public static IEnumerable<WebItem> FindAll(IWebDriver driver)
+    {
+        List<WebItem> items = new List<WebItem>();
+
+        foreach (var item in driver.FindElements(By.XPath(XPath)))
+            items.Add(new WebItem() { _element = item });
+
+        return items;
+    }
+
+    public void Like()
+    {
+        var likeBtn = _element.FindElement(By.CssSelector(".to-favorite-button"));
+        likeBtn.CustomeClick(((IWrapsDriver)_element).WrappedDriver);
     }
 }
